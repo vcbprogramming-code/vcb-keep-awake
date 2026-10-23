@@ -1,0 +1,44 @@
+# Keeps the VCB Connect UAT server (Render free plan) from sleeping, so the first visit of the day does not wait
+# a minute while it starts. Render puts a free server to sleep after ~15 idle minutes.
+#
+# GitHub starts scheduled runs late at busy times, so each run stays 25 minutes and visits every 5 minutes, and a
+# new run starts every 20 minutes — the server is never left alone long enough to sleep.
+# UAT only: the production server shares Render's ~750 free hours a month and must not be kept awake on the free plan.
+name: Keep UAT awake
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+    - cron: '0 3 1 * *'   # monthly: one line of activity, so GitHub does not switch the schedule off after 60 quiet days
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  visit:
+    if: github.event.schedule != '0 3 1 * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Visit the UAT server every 5 minutes for 25 minutes
+        run: |
+          for i in 1 2 3 4 5 6; do
+            curl -s -o /dev/null -m 90 -w "$(date -u +%H:%M) %{http_code} in %{time_total}s\n" \
+              https://vcb-hr-api-uat.onrender.com/api/health || echo "$(date -u +%H:%M) no answer"
+            if [ "$i" -lt 6 ]; then sleep 300; fi
+          done
+
+  stay-active:
+    if: github.event.schedule == '0 3 1 * *'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record this month's run
+        run: |
+          date -u +%Y-%m > last-month.txt
+          git config user.name "vcbprogramming-code"
+          git config user.email "287355583+vcbprogramming-code@users.noreply.github.com"
+          git add last-month.txt
+          git commit -m "Monthly activity so the schedule stays on" || exit 0
+          git push
