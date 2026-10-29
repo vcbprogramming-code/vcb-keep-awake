@@ -1,6 +1,10 @@
 # Keeps the VCB Connect UAT server (Render free plan) from sleeping, so the first visit of the day does not wait
 # a minute while it starts. Render puts a free server to sleep after ~15 idle minutes.
 #
+# It also WATCHES the server: if two visits in a row (about 10 minutes) get no healthy answer, the run fails and GitHub
+# e-mails the repository owner. Two in a row, not one, so the minute or two a server needs to restart after an update
+# does not raise a false alarm. A healthy answer is HTTP 200 with "status":"ok" from /api/health.
+#
 # GitHub starts scheduled runs late at busy times, so each run stays 25 minutes and visits every 5 minutes, and a
 # new run starts every 20 minutes — the server is never left alone long enough to sleep.
 # UAT only: the production server shares Render's ~750 free hours a month and must not be kept awake on the free plan.
@@ -11,6 +15,11 @@ on:
     - cron: '*/20 * * * *'
     - cron: '0 3 1 * *'   # monthly: one line of activity, so GitHub does not switch the schedule off after 60 quiet days
   workflow_dispatch:
+    inputs:
+      test_failure:
+        description: 'Send a test alert (fails on purpose; the server is not down)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -21,11 +30,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Test alert (manual run only)
+        if: ${{ github.event.inputs.test_failure == 'true' }}
+        run: |
+          echo "::error::This is a test of the alert. VCB Connect UAT is not down."
+          exit 1
+
       - name: Visit the UAT server every 5 minutes for 25 minutes
         run: |
+          fails=0
           for i in 1 2 3 4 5 6; do
-            curl -s -o /dev/null -m 90 -w "$(date -u +%H:%M) %{http_code} in %{time_total}s\n" \
-              https://vcb-hr-api-uat.onrender.com/api/health || echo "$(date -u +%H:%M) no answer"
+            code=$(curl -s -o /tmp/health.json -m 90 -w '%{http_code}' https://vcb-hr-api-uat.onrender.com/api/health || echo 000)
+            if [ "$code" = "200" ] && grep -q '"status":"ok"' /tmp/health.json 2>/dev/null; then
+              fails=0; verdict=ok
+            else
+              fails=$((fails + 1)); verdict=FAILED
+            fi
+            echo "$(date -u +%H:%M) $code $verdict"
+            if [ "$fails" -ge 2 ]; then
+              echo "::error::VCB Connect UAT API gave no healthy answer for two visits in a row (about 10 minutes). Last status: $code"
+              exit 1
+            fi
             if [ "$i" -lt 6 ]; then sleep 300; fi
           done
 
