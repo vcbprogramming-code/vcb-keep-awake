@@ -7,12 +7,16 @@
 #
 # GitHub starts scheduled runs late at busy times, so each run stays 25 minutes and visits every 5 minutes, and a
 # new run starts every 20 minutes — the server is never left alone long enough to sleep.
-# UAT only: the production server shares Render's ~750 free hours a month and must not be kept awake on the free plan.
+# Only the live server (vcb-hr-api-uat; the name is historical) is kept awake — and only 06:00-20:00 Thailand time (owner,
+# 2026-11-02), so it uses about 420 of Render's ~750 free hours a month instead of ~720. Outside those hours the server may
+# sleep; the first visit then waits about a minute. Times below are UTC (Thailand = UTC+7): 23:00 UTC = 06:00, 13:00 UTC = 20:00.
+# The last run starts at 19:20 and visits until about 19:45, so the server falls asleep at about 20:00.
 name: Keep UAT awake
 
 on:
   schedule:
-    - cron: '*/20 * * * *'
+    - cron: '*/20 23,0-11 * * *'   # every 20 minutes, 06:00-18:59 Thailand
+    - cron: '0,20 12 * * *'        # 19:00 and 19:20 Thailand
     - cron: '0 3 1 * *'   # monthly: one line of activity, so GitHub does not switch the schedule off after 60 quiet days
   workflow_dispatch:
     inputs:
